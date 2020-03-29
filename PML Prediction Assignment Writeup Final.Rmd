@@ -1,0 +1,237 @@
+---
+title: "Practical Machine Learning - Prediction Assignment Writeup"
+author: "Johanna Fajardo-Gonzalez"
+date: "3/28/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+## Objective of the Analysis
+
+The goal of this project is to predict the manner in which the participants did the exercise. This is the `classe` variable in the training set. Other variables to predict with are also used. 
+
+
+## Examining the Data
+
+### Loading the data
+
+```{r}
+#Set working directory
+setwd("C:/Users/deisyf/Dropbox/PLM")
+```
+
+We start by loading the required R packages and setting a seed.
+
+```{r}
+#Load required packages
+suppressMessages(library(lattice))
+suppressMessages(library(ggplot2))
+suppressMessages(library(caret))
+suppressMessages(library(rpart))
+suppressMessages(library(rpart.plot))
+suppressMessages(library(corrplot))
+suppressMessages(library(rattle))
+suppressMessages(library(randomForest))
+suppressMessages(library(RColorBrewer))
+```
+
+```{r}
+#set seed
+set.seed(1234)
+```
+
+```{r}
+#Download data from the web
+url_train <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url_test  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+```{r}
+#Creating training and test data
+#data_train <- read.csv(url(url_train), strip.white = TRUE, na.strings = c("NA",""))
+#data_test  <- read.csv(url(url_test),  strip.white = TRUE, na.strings = c("NA",""))
+data_train <- read.csv("pml-training.csv", na.strings = c("NA", ""))
+data_test  <- read.csv("pml-testing.csv", na.strings = c("NA", ""))
+```
+
+```{r}
+#structure of datasets
+dim(data_train)
+dim(data_test)
+```
+
+The training dataset has 19,622 observations and 160 variables. The test (quiz) dataset contains 20 observations and 160 variables, the same as those in the training set. 
+
+### Cleaning the Data 
+
+The two datasets (`data_train` and `data_test`) have a large number of NA values, as well as near-zero-variance (NZV) variables. These will be removed for the purpose of the analysis.
+
+We first remove the NA values.
+
+```{r}
+data_train  <- data_train [, colSums(is.na(data_train )) == 0]
+data_test <- data_test[, colSums(is.na(data_test)) == 0]
+```
+
+```{r}
+dim(data_train)
+```
+
+```{r}
+dim(data_test)
+```
+
+We now remove the NZV variables.
+
+```{r}
+nzv_var <- nearZeroVar(data_train)
+data_train <- data_train[ , -nzv_var]
+data_test  <- data_test[ , -nzv_var]
+```
+
+```{r}
+dim(data_train)
+```
+
+```{r}
+dim(data_test)
+```
+
+The first five predictors are also removed since these variables are identifiers.
+
+```{r}
+data_train<- data_train[, -c(1:5)]
+data_test <- data_test[, -c(1:5)]
+```
+
+
+```{r}
+dim(data_train)
+```
+
+```{r}
+dim(data_test)
+```
+
+
+The number of variables for the analysis has been reduced from 160 to 54.
+
+### Splitting the Data 
+
+We now create a cross validation dataset to compare the model created by the training subset. This is to compute the out-of-sample errors. Thus, we split the cleaned training set into a training set (train, 60%) for prediction and a validation set (valid, 40%). 
+
+```{r}
+inTrain <- createDataPartition(data_train$classe, p = 0.6, list = FALSE)
+train <- data_train[inTrain, ]
+validation <- data_train[-inTrain, ]
+```
+
+## Building the Model
+
+### Creating the Prediction Model
+
+Here we create two models to predict the `classe` outcome: 1. Classification Tree; and 2. Random Forest.
+
+In this analysis,  we consider a 5-fold cross-validation (default setting in trainControl function is k=10).
+
+```{r}
+set.seed(1234)
+control <- trainControl(method = "cv", number = 5)
+```
+
+
+#### Classification Tree
+
+We now obtain the classification tree:
+
+```{r}
+set.seed(1234)
+fit_decision_tree <- train(classe ~ ., data = train, method="rpart", trControl = control)
+print(fit_decision_tree, digits = 4)
+```
+
+```{r}
+fancyRpartPlot(fit_decision_tree$finalModel)
+```
+
+We now calculate the predictions of the decision tree model on the validation data.
+
+```{r}
+predict_decision_tree <- predict(fit_decision_tree, newdata = validation)
+conf_matrix_decision_tree <- confusionMatrix(predict_decision_tree, validation$classe)
+conf_matrix_decision_tree
+```
+
+```{r}
+(accuracy_rpart <- conf_matrix_decision_tree$overall[1])
+```
+
+The predictive accuracy of the decision tree model is relatively low at 0.4904. The out-of-sample error is 0.5096.
+
+#### Random Forest
+
+We now use a random forest model to predict the `classe` outcome.
+
+```{r}
+set.seed(1234)
+fit_random_forest <- train(classe ~ ., data = train, method = "rf", 
+                   trControl = control)
+print(fit_random_forest, digits = 4)
+```
+
+The following are the prediction outcomes on the validation data:
+
+```{r}
+# Predict outcomes using validation set
+predict_random_forest <- predict(fit_random_forest, validation)
+# Show prediction result
+(conf_random_forest <- confusionMatrix(validation$classe, predict_random_forest))
+```
+
+```{r}
+(accuracy_random_forest <- conf_random_forest$overall[1])
+```
+
+The accuracy rate is 0.9972 and the out-of-sample error rate is 0.0028. 
+
+## Applying the Prediction Model
+
+The random forest model, which uses the `classe` variable in the training set and has the highest accuracy, is applied to 20 test cases available in the quiz data (`data_test`).
+
+```{r}
+predict_quiz <- (predict(fit_random_forest, data_test))
+predict_quiz
+```
+
+## Concluding Remarks
+
+To summarize, the predictive accuracy of the two models evaluated is as follows:
+
+-- Decision Tree Model: 49.04%
+
+-- Random Forest Model: 99.72%
+
+The random forest model with cross-validation produces the most accurate model for these data.
+
